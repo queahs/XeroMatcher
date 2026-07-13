@@ -269,6 +269,7 @@
             <th data-col="reference">Reference</th>
             <th data-col="amount">Amount</th>
             <th data-col="confidence">Match</th>
+            <th>Suggested code</th>
             <th data-col="code">Account code</th>
             <th data-col="tax">Tax type</th>
           </tr>
@@ -480,7 +481,7 @@ wireDrop('drop-basis', 'file-basis', parsed => {
     reference: findColumn(parsed.headers, ['reference','ref no','reference number','ref']),
     payee: findColumn(parsed.headers, ['contact','payee name','payee','name']),
     accountcode: findColumn(parsed.headers, ['account code','accountcode','nominal code','gl code','account no','account number','code']),
-    accountname: findColumn(parsed.headers, ['account name','accountname','nominal account','account']),
+    accountname: findColumn(parsed.headers, ['account name','accountname','nominal account']),
     taxtype: findColumn(parsed.headers, ['tax rate','taxtype','tax type','vat rate']),
     debit: findColumn(parsed.headers, ['debit amount','debit']),
     credit: findColumn(parsed.headers, ['credit amount','credit']),
@@ -656,12 +657,26 @@ document.getElementById('btn-process').addEventListener('click', () => {
       description: newCols.description ? r[newCols.description] : '',
       reference: newCols.reference ? r[newCols.reference] : '',
       code: m.code,
+      suggestedCode: m.code,
+      suggestedConfidence: m.confidence,
       confidence: m.confidence,
       tax: m.tax
     };
   });
   renderResults();
 });
+
+function nameForCode(code) {
+  if (!code) return '';
+  const match = codeOptions.find(o => o.code === code);
+  return match ? match.name : '';
+}
+
+function formatCodeWithName(code) {
+  if (!code) return '—';
+  const name = nameForCode(code);
+  return name ? (code + ' — ' + name) : code;
+}
 
 let currentFilter = 'all';
 let sortState = { col: null, dir: 1 };
@@ -763,6 +778,8 @@ function renderResults() {
     const amtVal = parseAmount(r.amount);
     const amtClass = amtVal !== null ? (amtVal < 0 ? 'amt-neg' : 'amt-pos') : '';
 
+    const suggestedText = r.suggestedConfidence === 'none' ? '—' : formatCodeWithName(r.suggestedCode);
+
     tr.innerHTML =
       '<td>' + esc(r.date) + '</td>' +
       '<td>' + esc(r.payee) + '</td>' +
@@ -770,6 +787,7 @@ function renderResults() {
       '<td>' + esc(r.reference) + '</td>' +
       '<td class="' + amtClass + '">' + esc(r.amount) + '</td>' +
       '<td><span class="badge ' + r.confidence + '">' + (r.confidence === 'exact' ? 'EXACT' : r.confidence === 'fuzzy' ? 'PARTIAL' : 'NONE') + '</span></td>' +
+      '<td class="suggested-cell" style="color:var(--muted);font-style:italic;">' + esc(suggestedText) + '</td>' +
       '<td class="code-cell"></td>' +
       '<td class="tax-cell"></td>';
 
@@ -867,8 +885,8 @@ document.getElementById('btn-export').addEventListener('click', () => {
   const lines = [header.join(',')];
   matchedRows.forEach(r => {
     const fields = [
-      csvField(r.date),
-      csvField(r.amount),
+      csvField(formatDateForExport(r.date)),
+      csvField(formatAmountForExport(r.amount)),
       csvField(r.payee),
       csvField(r.description),
       csvField(r.reference),
@@ -879,7 +897,8 @@ document.getElementById('btn-export').addEventListener('click', () => {
     ];
     lines.push(fields.join(','));
   });
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  // Prefix with a UTF-8 BOM so Excel/Xero don't misread £ or other special characters in text fields
+  const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -889,6 +908,22 @@ document.getElementById('btn-export').addEventListener('click', () => {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 });
+
+function formatDateForExport(dateStr) {
+  const ts = parseDateForSort(dateStr);
+  if (ts === null) return dateStr || '';
+  const d = new Date(ts);
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  return dd + '/' + mm + '/' + yyyy;
+}
+
+function formatAmountForExport(amountStr) {
+  const val = parseAmount(amountStr);
+  if (val === null) return amountStr || '';
+  return val.toFixed(2);
+}
 
 function csvField(v) {
   if (v === undefined || v === null) v = '';
