@@ -206,7 +206,7 @@
     </div>
     <p class="step-desc">Xero Account Transactions report export (CSV or Excel), with Account Code, Description, Reference and Contact columns included.</p>
     <div class="drop" id="drop-basis">
-      <div class="dtext">Drag &amp; drop CSV here, or click to choose a file</div>
+      <div class="dtext">Drag &amp; drop file here, or click to choose a file</div>
       <div class="hint">.csv, .xlsx or .xls</div>
       <input type="file" id="file-basis" accept=".csv,.xlsx,.xls">
     </div>
@@ -222,7 +222,7 @@
     </div>
     <p class="step-desc">Bank statement or unreconciled bank export (CSV or Excel) with Date, Amount, Payee/Description columns.</p>
     <div class="drop" id="drop-new">
-      <div class="dtext">Drag &amp; drop CSV here, or click to choose a file</div>
+      <div class="dtext">Drag &amp; drop file here, or click to choose a file</div>
       <div class="hint">.csv, .xlsx or .xls</div>
       <input type="file" id="file-new" accept=".csv,.xlsx,.xls">
     </div>
@@ -238,7 +238,7 @@
     </div>
     <p class="step-desc">Xero Chart of Accounts export (CSV or Excel). Fills the account code dropdown with your full code list and names. If skipped, the dropdown is built from codes found in the basis file.</p>
     <div class="drop" id="drop-coa">
-      <div class="dtext">Drag &amp; drop CSV here, or click to choose a file</div>
+      <div class="dtext">Drag &amp; drop file here, or click to choose a file</div>
       <div class="hint">.csv, .xlsx or .xls</div>
       <input type="file" id="file-coa" accept=".csv,.xlsx,.xls">
     </div>
@@ -313,15 +313,54 @@ function parseCSV(text) {
   return rows.filter(r => r.length > 1 || (r.length === 1 && r[0].trim() !== ''));
 }
 
-function rowsToObjects(rows) {
-  if (!rows.length) return { headers: [], data: [] };
-  const headers = rows[0].map(h => h.trim());
-  const data = rows.slice(1).map(r => {
-    const obj = {};
-    headers.forEach((h, idx) => obj[h] = (r[idx] !== undefined ? r[idx].trim() : ''));
-    return obj;
+const ALL_ALIASES = [
+  'date','transaction date','trans date',
+  'description','details','narrative','particulars','memo',
+  'reference','ref','ref no','reference number',
+  'contact','payee','name','payee name',
+  'account code','accountcode','code','nominal code','gl code','account no','account number',
+  'account name','accountname','account','nominal account',
+  'tax rate','taxtype','tax type','vat rate',
+  'debit','credit','debit amount','credit amount',
+  'gross','net','amount','transaction amount','amt'
+];
+
+function scoreRow(row) {
+  const norm = h => (h || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  let score = 0;
+  row.forEach(cell => {
+    const nc = norm(cell);
+    if (!nc) return;
+    for (const alias of ALL_ALIASES) {
+      const na = norm(alias);
+      if (nc === na || nc.includes(na)) { score++; break; }
+    }
   });
-  return { headers, data };
+  return score;
+}
+
+function findHeaderRowIndex(rows) {
+  let best = 0, bestScore = -1;
+  const limit = Math.min(rows.length, 20);
+  for (let i = 0; i < limit; i++) {
+    const s = scoreRow(rows[i]);
+    if (s > bestScore) { bestScore = s; best = i; }
+  }
+  return best;
+}
+
+function rowsToObjects(rows) {
+  if (!rows.length) return { headers: [], data: [], headerRowNum: 0 };
+  const headerIdx = findHeaderRowIndex(rows);
+  const headers = rows[headerIdx].map(h => h.trim());
+  const data = rows.slice(headerIdx + 1)
+    .map(r => {
+      const obj = {};
+      headers.forEach((h, idx) => obj[h] = (r[idx] !== undefined ? r[idx].trim() : ''));
+      return obj;
+    })
+    .filter(obj => Object.values(obj).some(v => v !== ''));
+  return { headers, data, headerRowNum: headerIdx + 1 };
 }
 
 /* ---------------------------------------------------------------------
@@ -434,24 +473,24 @@ function handleFile(file, dropEl, onLoaded) {
 wireDrop('drop-basis', 'file-basis', parsed => {
   basisData = parsed;
   basisCols = {
-    date: findColumn(parsed.headers, ['date']),
-    description: findColumn(parsed.headers, ['description','details','narrative','particulars']),
-    reference: findColumn(parsed.headers, ['reference','ref']),
-    payee: findColumn(parsed.headers, ['contact','payee','name']),
-    accountcode: findColumn(parsed.headers, ['account code','accountcode','code']),
-    accountname: findColumn(parsed.headers, ['account name','accountname','account']),
-    taxtype: findColumn(parsed.headers, ['tax rate','taxtype','tax type']),
-    debit: findColumn(parsed.headers, ['debit']),
-    credit: findColumn(parsed.headers, ['credit']),
+    date: findColumn(parsed.headers, ['date','transaction date','trans date']),
+    description: findColumn(parsed.headers, ['description','details','narrative','particulars','memo']),
+    reference: findColumn(parsed.headers, ['reference','ref no','reference number','ref']),
+    payee: findColumn(parsed.headers, ['contact','payee name','payee','name']),
+    accountcode: findColumn(parsed.headers, ['account code','accountcode','nominal code','gl code','account no','account number','code']),
+    accountname: findColumn(parsed.headers, ['account name','accountname','nominal account','account']),
+    taxtype: findColumn(parsed.headers, ['tax rate','taxtype','tax type','vat rate']),
+    debit: findColumn(parsed.headers, ['debit amount','debit']),
+    credit: findColumn(parsed.headers, ['credit amount','credit']),
     gross: findColumn(parsed.headers, ['gross']),
     net: findColumn(parsed.headers, ['net']),
-    amount: findColumn(parsed.headers, ['amount'])
+    amount: findColumn(parsed.headers, ['transaction amount','amount','amt'])
   };
   const info = document.getElementById('info-basis');
   info.classList.remove('hidden');
   let warn = '';
   if (!basisCols.accountcode) warn = ' &mdash; <b style="color:#a53d3d">Account Code column not found, check your export</b>';
-  info.innerHTML = '<b>' + parsed.data.length + '</b> rows detected. Matched columns: ' +
+  info.innerHTML = '<b>' + parsed.data.length + '</b> rows detected (header found on row ' + parsed.headerRowNum + '). Matched columns: ' +
     Object.entries(basisCols).filter(([,v]) => v).map(([k,v]) => k + ' → "' + v + '"').join(', ') + warn;
   checkReady();
 });
@@ -459,29 +498,31 @@ wireDrop('drop-basis', 'file-basis', parsed => {
 wireDrop('drop-coa', 'file-coa', parsed => {
   coaData = parsed;
   coaCols = {
-    code: findColumn(parsed.headers, ['code','account code']),
-    name: findColumn(parsed.headers, ['name','account name'])
+    code: findColumn(parsed.headers, ['account code','accountcode','nominal code','gl code','account no','account number','code']),
+    name: findColumn(parsed.headers, ['account name','accountname','name'])
   };
   const info = document.getElementById('info-coa');
   info.classList.remove('hidden');
-  info.innerHTML = '<b>' + parsed.data.length + '</b> accounts loaded from chart of accounts.';
+  let warn = '';
+  if (!coaCols.code) warn = ' &mdash; <b style="color:#a53d3d">Code column not found, check your export</b>';
+  info.innerHTML = '<b>' + parsed.data.length + '</b> accounts loaded (header found on row ' + parsed.headerRowNum + ').' + warn;
   checkReady();
 });
 
 wireDrop('drop-new', 'file-new', parsed => {
   newData = parsed;
   newCols = {
-    date: findColumn(parsed.headers, ['date']),
-    amount: findColumn(parsed.headers, ['amount']),
-    payee: findColumn(parsed.headers, ['payee','contact','name']),
-    description: findColumn(parsed.headers, ['description','details','narrative']),
-    reference: findColumn(parsed.headers, ['reference','ref'])
+    date: findColumn(parsed.headers, ['date','transaction date','trans date']),
+    amount: findColumn(parsed.headers, ['transaction amount','amount','amt']),
+    payee: findColumn(parsed.headers, ['payee name','payee','contact','name']),
+    description: findColumn(parsed.headers, ['description','details','narrative','memo']),
+    reference: findColumn(parsed.headers, ['reference','ref no','reference number','ref'])
   };
   const info = document.getElementById('info-new');
   info.classList.remove('hidden');
   let warn = '';
   if (!newCols.amount || !newCols.date) warn = ' &mdash; <b style="color:#a53d3d">Date or Amount column not found, check your file</b>';
-  info.innerHTML = '<b>' + parsed.data.length + '</b> rows detected. Matched columns: ' +
+  info.innerHTML = '<b>' + parsed.data.length + '</b> rows detected (header found on row ' + parsed.headerRowNum + '). Matched columns: ' +
     Object.entries(newCols).filter(([,v]) => v).map(([k,v]) => k + ' → "' + v + '"').join(', ') + warn;
   checkReady();
 });
