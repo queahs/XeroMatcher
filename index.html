@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Xero Account Code Matcher</title>
+<style>
+  :root {
+    --ink: #1c1c1a;
+    --paper: #fafaf8;
+    --line: #e2e0d8;
+    --accent: #2f5c4b;
+    --accent-soft: #e7f0ea;
+    --amber: #a5690f;
+    --amber-soft: #fbf0dc;
+    --red: #a53d3d;
+    --red-soft: #f9ebeb;
+    --muted: #83807a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+    line-height: 1.5;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 40px 24px 80px; }
+  header { margin-bottom: 32px; }
+  h1 {
+    font-size: 22px;
+    font-weight: 700;
+    margin: 0 0 6px;
+    letter-spacing: -0.01em;
+  }
+  .subtitle { color: var(--muted); font-size: 14px; margin: 0; }
+
+  .step {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 16px;
+    background: #fff;
+  }
+  .step-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+  .step-num {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-radius: 999px;
+    width: 20px; height: 20px;
+    display: inline-flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .step-title { font-size: 15px; font-weight: 600; }
+  .step-tag {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin-left: auto;
+  }
+  .step-desc { font-size: 12.5px; color: var(--muted); margin: 4px 0 14px 30px; }
+
+  .drop {
+    margin-left: 30px;
+    border: 1.5px dashed var(--line);
+    border-radius: 8px;
+    padding: 18px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--muted);
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .drop:hover, .drop.drag { border-color: var(--accent); background: var(--accent-soft); }
+  .drop input { display: none; }
+  .drop .fname {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .drop .hint { font-size: 11px; margin-top: 4px; }
+
+  .row-info {
+    margin-left: 30px;
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .row-info b { color: var(--ink); }
+
+  .actions { display: flex; gap: 10px; align-items: center; margin: 24px 0; }
+  button {
+    font-family: inherit;
+    font-size: 13.5px;
+    font-weight: 600;
+    border-radius: 7px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #fff;
+    padding: 10px 18px;
+    cursor: pointer;
+  }
+  button.secondary {
+    background: #fff;
+    color: var(--accent);
+  }
+  button:disabled {
+    background: #eee; border-color: #ddd; color: #aaa; cursor: not-allowed;
+  }
+  .status-msg { font-size: 12.5px; color: var(--muted); }
+
+  .summary {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .pill {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 7px 12px;
+    border-radius: 999px;
+  }
+  .pill.exact { background: var(--accent-soft); color: var(--accent); }
+  .pill.fuzzy { background: var(--amber-soft); color: var(--amber); }
+  .pill.none { background: var(--red-soft); color: var(--red); }
+  .pill.total { background: #eee; color: var(--ink); }
+
+  .filter-bar {
+    display: flex; gap: 8px; margin-bottom: 10px; font-size: 12.5px;
+  }
+  .filter-bar button {
+    background: #fff; color: var(--muted); border: 1px solid var(--line);
+    font-weight: 500; padding: 6px 12px;
+  }
+  .filter-bar button.active {
+    background: var(--ink); color: #fff; border-color: var(--ink);
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; background: #fff; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); font-weight: 600; }
+  td.desc-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+  tr.row-none { background: var(--red-soft); }
+  tr.row-fuzzy { background: var(--amber-soft); }
+  .amt-neg { color: var(--red); }
+  .amt-pos { color: var(--accent); }
+
+  .badge { font-size: 10.5px; font-weight: 700; padding: 3px 7px; border-radius: 5px; letter-spacing: .02em; }
+  .badge.exact { background: var(--accent-soft); color: var(--accent); }
+  .badge.fuzzy { background: var(--amber-soft); color: var(--amber); }
+  .badge.none { background: var(--red-soft); color: var(--red); }
+
+  select, input.code-input {
+    font-family: inherit;
+    font-size: 12.5px;
+    padding: 5px 6px;
+    border-radius: 5px;
+    border: 1px solid var(--line);
+    background: #fff;
+    max-width: 180px;
+  }
+  select.empty, input.code-input.empty { border-color: var(--red); background: #fff5f5; }
+
+  .table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+
+  .export-bar {
+    margin-top: 20px;
+    padding: 16px 20px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .export-bar .warn { font-size: 12.5px; color: var(--red); font-weight: 600; }
+  .export-bar .ok { font-size: 12.5px; color: var(--accent); font-weight: 600; }
+
+  .footnote { font-size: 11.5px; color: var(--muted); margin-top: 30px; line-height: 1.6; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Xero Account Code Matcher</h1>
+    <p class="subtitle">Upload previously-coded transactions as a basis, then a new uncoded file — matching account codes get applied automatically, with a dropdown for anything that needs a manual call.</p>
+  </header>
+
+  <!-- STEP 1: BASIS FILE -->
+  <div class="step">
+    <div class="step-head">
+      <span class="step-num">1</span>
+      <span class="step-title">Basis file — already-coded transactions</span>
+      <span class="step-tag">Required</span>
+    </div>
+    <p class="step-desc">Xero Account Transactions report export (CSV), with Account Code, Description, Reference and Contact columns included.</p>
+    <div class="drop" id="drop-basis">
+      <div class="dtext">Drag &amp; drop CSV here, or click to choose a file</div>
+      <div class="hint">.csv only</div>
+      <input type="file" id="file-basis" accept=".csv">
+    </div>
+    <div class="row-info hidden" id="info-basis"></div>
+  </div>
+
+  <!-- STEP 2: NEW FILE -->
+  <div class="step">
+    <div class="step-head">
+      <span class="step-num">2</span>
+      <span class="step-title">New file — needs account codes</span>
+      <span class="step-tag">Required</span>
+    </div>
+    <p class="step-desc">Bank statement or unreconciled bank export (CSV) with Date, Amount, Payee/Description columns.</p>
+    <div class="drop" id="drop-new">
+      <div class="dtext">Drag &amp; drop CSV here, or click to choose a file</div>
+      <div class="hint">.csv only</div>
+      <input type="file" id="file-new" accept=".csv">
+    </div>
+    <div class="row-info hidden" id="info-new"></div>
+  </div>
+
+  <!-- STEP 3: CHART OF ACCOUNTS -->
+  <div class="step">
+    <div class="step-head">
+      <span class="step-num">3</span>
+      <span class="step-title">Chart of accounts</span>
+      <span class="step-tag">Optional</span>
+    </div>
+    <p class="step-desc">Xero Chart of Accounts export (CSV). Fills the account code dropdown with your full code list and names. If skipped, the dropdown is built from codes found in the basis file.</p>
+    <div class="drop" id="drop-coa">
+      <div class="dtext">Drag &amp; drop CSV here, or click to choose a file</div>
+      <div class="hint">.csv only</div>
+      <input type="file" id="file-coa" accept=".csv">
+    </div>
+    <div class="row-info hidden" id="info-coa"></div>
+  </div>
+
+  <div class="actions">
+    <button id="btn-process" disabled>Match account codes</button>
+    <span class="status-msg" id="status-msg">Upload the basis file and new file to continue.</span>
+  </div>
+
+  <!-- RESULTS -->
+  <div id="results" class="hidden">
+    <div class="summary" id="summary"></div>
+    <div class="filter-bar">
+      <button class="active" data-filter="all">All rows</button>
+      <button data-filter="review">Needs review</button>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Payee</th>
+            <th>Description</th>
+            <th>Reference</th>
+            <th>Amount</th>
+            <th>Match</th>
+            <th>Account code</th>
+            <th>Tax type</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+
+    <div class="export-bar">
+      <button id="btn-export" disabled>Download Xero bank import CSV</button>
+      <span id="export-msg" class="warn"></span>
+    </div>
+  </div>
+
+  <p class="footnote">
+    Runs entirely in your browser — nothing is uploaded anywhere. Matching first tries an exact match on Payee, then Description, against your basis file; if nothing exact is found it falls back to a partial text match. Every row with no match (or a low-confidence fuzzy match) is highlighted for manual review — select the correct code and tax type from the dropdowns before exporting. Rows without both a code and tax type block export, since Xero's precoded import requires both to reconcile automatically.
+  </p>
+
+</div>
+
+<script>
+/* ---------------------------------------------------------------------
+   CSV PARSING
+--------------------------------------------------------------------- */
+function parseCSV(text) {
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else { inQuotes = false; }
+      } else { field += c; }
+    } else {
+      if (c === '"') inQuotes = true;
+      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+      else field += c;
+    }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows.filter(r => r.length > 1 || (r.length === 1 && r[0].trim() !== ''));
+}
+
+function rowsToObjects(rows) {
+  if (!rows.length) return { headers: [], data: [] };
+  const headers = rows[0].map(h => h.trim());
+  const data = rows.slice(1).map(r => {
+    const obj = {};
+    headers.forEach((h, idx) => obj[h] = (r[idx] !== undefined ? r[idx].trim() : ''));
+    return obj;
+  });
+  return { headers, data };
+}
+
+/* ---------------------------------------------------------------------
+   COLUMN DETECTION
+--------------------------------------------------------------------- */
+function findColumn(headers, aliases) {
+  const norm = h => h.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const normHeaders = headers.map(norm);
+  for (const alias of aliases) {
+    const a = norm(alias);
+    const idx = normHeaders.indexOf(a);
+    if (idx !== -1) return headers[idx];
+  }
+  for (const alias of aliases) {
+    const a = norm(alias);
+    const idx = normHeaders.findIndex(h => h.includes(a));
+    if (idx !== -1) return headers[idx];
+  }
+  return null;
+}
+
+/* ---------------------------------------------------------------------
+   TEXT / AMOUNT HELPERS
+--------------------------------------------------------------------- */
+function normText(s) {
+  if (!s) return '';
+  return s.toLowerCase()
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function parseAmount(s) {
+  if (s === undefined || s === null) return null;
+  let str = String(s).trim();
+  if (str === '') return null;
+  let neg = false;
+  if (/^\(.*\)$/.test(str)) { neg = true; str = str.slice(1, -1); }
+  str = str.replace(/[£$,]/g, '');
+  if (str.startsWith('-')) { neg = true; str = str.slice(1); }
+  const val = parseFloat(str);
+  if (isNaN(val)) return null;
+  return neg ? -Math.abs(val) : val;
+}
+
+/* ---------------------------------------------------------------------
+   STATE
+--------------------------------------------------------------------- */
+let basisData = null;   // {headers, data}
+let coaData = null;
+let newData = null;
+let basisCols = {};
+let newCols = {};
+let coaCols = {};
+let matchedRows = [];
+let codeOptions = [];   // [{code, name}]
+let taxOptions = ['No VAT','Zero Rated Expenses','Zero Rated Income','Tax Exempt (0%)',
+                   '5% (VAT on Expenses)','5% (VAT on Income)',
+                   '20% (VAT on Expenses)','20% (VAT on Income)'];
+
+/* ---------------------------------------------------------------------
+   FILE UPLOAD WIRING
+--------------------------------------------------------------------- */
+function wireDrop(dropId, inputId, onLoaded) {
+  const drop = document.getElementById(dropId);
+  const input = document.getElementById(inputId);
+  drop.addEventListener('click', () => input.click());
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('drag'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault();
+    drop.classList.remove('drag');
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0], drop, onLoaded);
+  });
+  input.addEventListener('change', e => {
+    if (e.target.files.length) handleFile(e.target.files[0], drop, onLoaded);
+  });
+}
+
+function handleFile(file, dropEl, onLoaded) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const rows = parseCSV(e.target.result);
+    const parsed = rowsToObjects(rows);
+    dropEl.querySelector('.dtext').innerHTML = 'File loaded: <span class="fname">' + file.name + '</span>';
+    onLoaded(parsed);
+  };
+  reader.readAsText(file);
+}
+
+wireDrop('drop-basis', 'file-basis', parsed => {
+  basisData = parsed;
+  basisCols = {
+    date: findColumn(parsed.headers, ['date']),
+    description: findColumn(parsed.headers, ['description','details','narrative','particulars']),
+    reference: findColumn(parsed.headers, ['reference','ref']),
+    payee: findColumn(parsed.headers, ['contact','payee','name']),
+    accountcode: findColumn(parsed.headers, ['account code','accountcode','code']),
+    accountname: findColumn(parsed.headers, ['account name','accountname','account']),
+    taxtype: findColumn(parsed.headers, ['tax rate','taxtype','tax type']),
+    debit: findColumn(parsed.headers, ['debit']),
+    credit: findColumn(parsed.headers, ['credit']),
+    gross: findColumn(parsed.headers, ['gross']),
+    net: findColumn(parsed.headers, ['net']),
+    amount: findColumn(parsed.headers, ['amount'])
+  };
+  const info = document.getElementById('info-basis');
+  info.classList.remove('hidden');
+  let warn = '';
+  if (!basisCols.accountcode) warn = ' &mdash; <b style="color:#a53d3d">Account Code column not found, check your export</b>';
+  info.innerHTML = '<b>' + parsed.data.length + '</b> rows detected. Matched columns: ' +
+    Object.entries(basisCols).filter(([,v]) => v).map(([k,v]) => k + ' → "' + v + '"').join(', ') + warn;
+  checkReady();
+});
+
+wireDrop('drop-coa', 'file-coa', parsed => {
+  coaData = parsed;
+  coaCols = {
+    code: findColumn(parsed.headers, ['code','account code']),
+    name: findColumn(parsed.headers, ['name','account name'])
+  };
+  const info = document.getElementById('info-coa');
+  info.classList.remove('hidden');
+  info.innerHTML = '<b>' + parsed.data.length + '</b> accounts loaded from chart of accounts.';
+  checkReady();
+});
+
+wireDrop('drop-new', 'file-new', parsed => {
+  newData = parsed;
+  newCols = {
+    date: findColumn(parsed.headers, ['date']),
+    amount: findColumn(parsed.headers, ['amount']),
+    payee: findColumn(parsed.headers, ['payee','contact','name']),
+    description: findColumn(parsed.headers, ['description','details','narrative']),
+    reference: findColumn(parsed.headers, ['reference','ref'])
+  };
+  const info = document.getElementById('info-new');
+  info.classList.remove('hidden');
+  let warn = '';
+  if (!newCols.amount || !newCols.date) warn = ' &mdash; <b style="color:#a53d3d">Date or Amount column not found, check your file</b>';
+  info.innerHTML = '<b>' + parsed.data.length + '</b> rows detected. Matched columns: ' +
+    Object.entries(newCols).filter(([,v]) => v).map(([k,v]) => k + ' → "' + v + '"').join(', ') + warn;
+  checkReady();
+});
+
+function checkReady() {
+  const ready = basisData && newData && basisCols.accountcode && newCols.date && newCols.amount;
+  document.getElementById('btn-process').disabled = !ready;
+  document.getElementById('status-msg').textContent = ready
+    ? 'Ready to match.'
+    : 'Upload the basis file and new file (with recognisable columns) to continue.';
+}
+
+/* ---------------------------------------------------------------------
+   BUILD LOOKUPS FROM BASIS FILE
+--------------------------------------------------------------------- */
+function buildLookups() {
+  const payeeMap = {};   // normText(payee) -> {code: count}
+  const descMap = {};    // normText(desc) -> {code: count}
+  const taxByCode = {};  // code -> {taxtype: count}
+  const codeNameSeen = {}; // code -> name
+  const fuzzyEntries = []; // [{text, code}]
+
+  basisData.data.forEach(r => {
+    const code = basisCols.accountcode ? r[basisCols.accountcode] : '';
+    if (!code) return;
+    const payee = basisCols.payee ? r[basisCols.payee] : '';
+    const desc = basisCols.description ? r[basisCols.description] : '';
+    const tax = basisCols.taxtype ? r[basisCols.taxtype] : '';
+    const accName = basisCols.accountname ? r[basisCols.accountname] : '';
+
+    if (accName) codeNameSeen[code] = accName;
+
+    const np = normText(payee);
+    const nd = normText(desc);
+
+    if (np) {
+      payeeMap[np] = payeeMap[np] || {};
+      payeeMap[np][code] = (payeeMap[np][code] || 0) + 1;
+      fuzzyEntries.push({ text: np, code });
+    }
+    if (nd) {
+      descMap[nd] = descMap[nd] || {};
+      descMap[nd][code] = (descMap[nd][code] || 0) + 1;
+      fuzzyEntries.push({ text: nd, code });
+    }
+    if (tax) {
+      taxByCode[code] = taxByCode[code] || {};
+      taxByCode[code][tax] = (taxByCode[code][tax] || 0) + 1;
+    }
+  });
+
+  function topKey(obj) {
+    let best = null, bestCount = 0;
+    for (const k in obj) if (obj[k] > bestCount) { best = k; bestCount = obj[k]; }
+    return best;
+  }
+
+  const taxForCode = {};
+  Object.keys(taxByCode).forEach(code => taxForCode[code] = topKey(taxByCode[code]));
+
+  // build code option list
+  const codeSet = {};
+  basisData.data.forEach(r => {
+    const code = basisCols.accountcode ? r[basisCols.accountcode] : '';
+    if (code) codeSet[code] = codeNameSeen[code] || '';
+  });
+  if (coaData && coaCols.code) {
+    coaData.data.forEach(r => {
+      const code = r[coaCols.code];
+      const name = coaCols.name ? r[coaCols.name] : '';
+      if (code) codeSet[code] = name || codeSet[code] || '';
+    });
+  }
+  codeOptions = Object.keys(codeSet)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    .map(code => ({ code, name: codeSet[code] }));
+
+  return { payeeMap, descMap, fuzzyEntries, taxForCode, topKey };
+}
+
+function matchTransaction(row, lookups) {
+  const payee = newCols.payee ? row[newCols.payee] : '';
+  const desc = newCols.description ? row[newCols.description] : '';
+  const np = normText(payee);
+  const nd = normText(desc);
+
+  // 1. exact payee
+  if (np && lookups.payeeMap[np]) {
+    const code = lookups.topKey(lookups.payeeMap[np]);
+    return { code, confidence: 'exact', tax: lookups.taxForCode[code] || '' };
+  }
+  // 2. exact description
+  if (nd && lookups.descMap[nd]) {
+    const code = lookups.topKey(lookups.descMap[nd]);
+    return { code, confidence: 'exact', tax: lookups.taxForCode[code] || '' };
+  }
+  // 3. fuzzy contains, on payee then description
+  const candidates = {};
+  const targets = [np, nd].filter(t => t && t.length >= 4);
+  targets.forEach(target => {
+    lookups.fuzzyEntries.forEach(entry => {
+      if (entry.text.length < 4) return;
+      if (target.includes(entry.text) || entry.text.includes(target)) {
+        candidates[entry.code] = (candidates[entry.code] || 0) + 1;
+      }
+    });
+  });
+  const codes = Object.keys(candidates);
+  if (codes.length) {
+    let best = codes[0];
+    codes.forEach(c => { if (candidates[c] > candidates[best]) best = c; });
+    return { code: best, confidence: 'fuzzy', tax: lookups.taxForCode[best] || '' };
+  }
+  // 4. no match
+  return { code: '', confidence: 'none', tax: '' };
+}
+
+/* ---------------------------------------------------------------------
+   PROCESS
+--------------------------------------------------------------------- */
+document.getElementById('btn-process').addEventListener('click', () => {
+  const lookups = buildLookups();
+  matchedRows = newData.data.map(r => {
+    const m = matchTransaction(r, lookups);
+    return {
+      date: newCols.date ? r[newCols.date] : '',
+      amount: newCols.amount ? r[newCols.amount] : '',
+      payee: newCols.payee ? r[newCols.payee] : '',
+      description: newCols.description ? r[newCols.description] : '',
+      reference: newCols.reference ? r[newCols.reference] : '',
+      code: m.code,
+      confidence: m.confidence,
+      tax: m.tax
+    };
+  });
+  renderResults();
+});
+
+let currentFilter = 'all';
+
+function renderResults() {
+  document.getElementById('results').classList.remove('hidden');
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = '';
+
+  let exact = 0, fuzzy = 0, none = 0;
+  matchedRows.forEach(r => {
+    if (r.confidence === 'exact') exact++;
+    else if (r.confidence === 'fuzzy') fuzzy++;
+    else none++;
+  });
+
+  document.getElementById('summary').innerHTML =
+    '<span class="pill total">' + matchedRows.length + ' total</span>' +
+    '<span class="pill exact">' + exact + ' exact match</span>' +
+    '<span class="pill fuzzy">' + fuzzy + ' partial match</span>' +
+    '<span class="pill none">' + none + ' no match</span>';
+
+  matchedRows.forEach((r, idx) => {
+    if (currentFilter === 'review' && r.confidence === 'exact') return;
+
+    const tr = document.createElement('tr');
+    tr.className = r.confidence === 'none' ? 'row-none' : (r.confidence === 'fuzzy' ? 'row-fuzzy' : '');
+
+    const amtVal = parseAmount(r.amount);
+    const amtClass = amtVal !== null ? (amtVal < 0 ? 'amt-neg' : 'amt-pos') : '';
+
+    tr.innerHTML =
+      '<td>' + esc(r.date) + '</td>' +
+      '<td>' + esc(r.payee) + '</td>' +
+      '<td class="desc-cell" title="' + esc(r.description) + '">' + esc(r.description) + '</td>' +
+      '<td>' + esc(r.reference) + '</td>' +
+      '<td class="' + amtClass + '">' + esc(r.amount) + '</td>' +
+      '<td><span class="badge ' + r.confidence + '">' + (r.confidence === 'exact' ? 'EXACT' : r.confidence === 'fuzzy' ? 'PARTIAL' : 'NONE') + '</span></td>' +
+      '<td class="code-cell"></td>' +
+      '<td class="tax-cell"></td>';
+
+    const codeCell = tr.querySelector('.code-cell');
+    const codeSelect = buildCodeSelect(r.code, idx);
+    codeCell.appendChild(codeSelect);
+
+    const taxCell = tr.querySelector('.tax-cell');
+    const taxSelect = buildTaxSelect(r.tax, idx);
+    taxCell.appendChild(taxSelect);
+
+    tbody.appendChild(tr);
+  });
+
+  updateExportState();
+}
+
+function buildCodeSelect(selectedCode, idx) {
+  const sel = document.createElement('select');
+  sel.dataset.idx = idx;
+  sel.dataset.field = 'code';
+  let opts = '<option value="">Select code…</option>';
+  codeOptions.forEach(o => {
+    const label = o.name ? (o.code + ' — ' + o.name) : o.code;
+    opts += '<option value="' + esc(o.code) + '"' + (o.code === selectedCode ? ' selected' : '') + '>' + esc(label) + '</option>';
+  });
+  // if matched code isn't in the known list, add it so it's not silently dropped
+  if (selectedCode && !codeOptions.find(o => o.code === selectedCode)) {
+    opts += '<option value="' + esc(selectedCode) + '" selected>' + esc(selectedCode) + ' (not in code list)</option>';
+  }
+  sel.innerHTML = opts;
+  if (!selectedCode) sel.classList.add('empty');
+  sel.addEventListener('change', e => {
+    matchedRows[idx].code = e.target.value;
+    e.target.classList.toggle('empty', !e.target.value);
+    updateExportState();
+  });
+  return sel;
+}
+
+function buildTaxSelect(selectedTax, idx) {
+  const sel = document.createElement('select');
+  sel.dataset.idx = idx;
+  sel.dataset.field = 'tax';
+  let opts = '<option value="">Select tax type…</option>';
+  const allTax = selectedTax && !taxOptions.includes(selectedTax) ? [selectedTax, ...taxOptions] : taxOptions;
+  allTax.forEach(t => {
+    opts += '<option value="' + esc(t) + '"' + (t === selectedTax ? ' selected' : '') + '>' + esc(t) + '</option>';
+  });
+  sel.innerHTML = opts;
+  if (!selectedTax) sel.classList.add('empty');
+  sel.addEventListener('change', e => {
+    matchedRows[idx].tax = e.target.value;
+    e.target.classList.toggle('empty', !e.target.value);
+    updateExportState();
+  });
+  return sel;
+}
+
+function esc(s) {
+  if (s === undefined || s === null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+document.querySelectorAll('.filter-bar button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-bar button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentFilter = btn.dataset.filter;
+    renderResults();
+  });
+});
+
+function updateExportState() {
+  const missing = matchedRows.filter(r => !r.code || !r.tax).length;
+  const btn = document.getElementById('btn-export');
+  const msg = document.getElementById('export-msg');
+  if (missing > 0) {
+    btn.disabled = true;
+    msg.className = 'warn';
+    msg.textContent = missing + ' row' + (missing === 1 ? '' : 's') + ' still need' + (missing === 1 ? 's' : '') + ' an account code and/or tax type before you can export.';
+  } else {
+    btn.disabled = false;
+    msg.className = 'ok';
+    msg.textContent = 'All rows coded — ready to export.';
+  }
+}
+
+/* ---------------------------------------------------------------------
+   EXPORT
+--------------------------------------------------------------------- */
+document.getElementById('btn-export').addEventListener('click', () => {
+  const header = ['*Date','*Amount','Payee','Description','Reference','Check Number','*Currency','*AccountCode','*TaxType'];
+  const lines = [header.join(',')];
+  matchedRows.forEach(r => {
+    const fields = [
+      csvField(r.date),
+      csvField(r.amount),
+      csvField(r.payee),
+      csvField(r.description),
+      csvField(r.reference),
+      '',
+      'GBP',
+      csvField(r.code),
+      csvField(r.tax)
+    ];
+    lines.push(fields.join(','));
+  });
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'xero_bank_import_coded.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+
+function csvField(v) {
+  if (v === undefined || v === null) v = '';
+  v = String(v);
+  if (/[",\n]/.test(v)) return '"' + v.replace(/"/g, '""') + '"';
+  return v;
+}
+</script>
+</body>
+</html>
