@@ -147,6 +147,8 @@
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; background: #fff; }
   th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
   th { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); font-weight: 600; }
+  th[data-col] { cursor: pointer; user-select: none; }
+  th[data-col]:hover { color: var(--ink); }
   td.desc-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
   tr.row-none { background: var(--red-soft); }
   tr.row-fuzzy { background: var(--amber-soft); }
@@ -261,14 +263,14 @@
       <table>
         <thead>
           <tr>
-            <th>Date</th>
-            <th>Payee</th>
-            <th>Description</th>
-            <th>Reference</th>
-            <th>Amount</th>
-            <th>Match</th>
-            <th>Account code</th>
-            <th>Tax type</th>
+            <th data-col="date">Date</th>
+            <th data-col="payee">Payee</th>
+            <th data-col="description">Description</th>
+            <th data-col="reference">Reference</th>
+            <th data-col="amount">Amount</th>
+            <th data-col="confidence">Match</th>
+            <th data-col="code">Account code</th>
+            <th data-col="tax">Tax type</th>
           </tr>
         </thead>
         <tbody id="tbody"></tbody>
@@ -282,7 +284,7 @@
   </div>
 
   <p class="footnote">
-    Everything runs in your browser, and CSV files never leave your machine. Excel (.xlsx/.xls) files use a small reading library loaded once from a CDN, so an internet connection is needed the first time you open this tool with an Excel file in a session — if that's not available, export as CSV instead and it works fully offline. Matching first tries an exact match on Payee, then Description, against your basis file; if nothing exact is found it falls back to a partial text match. Every row with no match (or a low-confidence fuzzy match) is highlighted for manual review — select the correct code and tax type from the dropdowns before exporting. Rows without both a code and tax type block export, since Xero's precoded import requires both to reconcile automatically.
+    Everything runs in your browser, and CSV files never leave your machine. Excel (.xlsx/.xls) files use a small reading library loaded once from a CDN, so an internet connection is needed the first time you open this tool with an Excel file in a session — if that's not available, export as CSV instead and it works fully offline. Matching first tries an exact match on Payee, then Description, against your basis file; if nothing exact is found it falls back to a partial text match. Every row with no match (or a low-confidence fuzzy match) is highlighted for manual review. Tax type defaults to "No VAT" when nothing else is found, so it never blocks export. Account code is left blank if there's no match — export is still allowed, but it's worth reviewing any blank codes before uploading to Xero.
   </p>
 
 </div>
@@ -612,12 +614,12 @@ function matchTransaction(row, lookups) {
   // 1. exact payee
   if (np && lookups.payeeMap[np]) {
     const code = lookups.topKey(lookups.payeeMap[np]);
-    return { code, confidence: 'exact', tax: lookups.taxForCode[code] || '' };
+    return { code, confidence: 'exact', tax: lookups.taxForCode[code] || 'No VAT' };
   }
   // 2. exact description
   if (nd && lookups.descMap[nd]) {
     const code = lookups.topKey(lookups.descMap[nd]);
-    return { code, confidence: 'exact', tax: lookups.taxForCode[code] || '' };
+    return { code, confidence: 'exact', tax: lookups.taxForCode[code] || 'No VAT' };
   }
   // 3. fuzzy contains, on payee then description
   const candidates = {};
@@ -634,10 +636,10 @@ function matchTransaction(row, lookups) {
   if (codes.length) {
     let best = codes[0];
     codes.forEach(c => { if (candidates[c] > candidates[best]) best = c; });
-    return { code: best, confidence: 'fuzzy', tax: lookups.taxForCode[best] || '' };
+    return { code: best, confidence: 'fuzzy', tax: lookups.taxForCode[best] || 'No VAT' };
   }
   // 4. no match
-  return { code: '', confidence: 'none', tax: '' };
+  return { code: '', confidence: 'none', tax: 'No VAT' };
 }
 
 /* ---------------------------------------------------------------------
@@ -662,8 +664,79 @@ document.getElementById('btn-process').addEventListener('click', () => {
 });
 
 let currentFilter = 'all';
+let sortState = { col: null, dir: 1 };
+
+const COLUMN_LABELS = {
+  date: 'Date', payee: 'Payee', description: 'Description', reference: 'Reference',
+  amount: 'Amount', confidence: 'Match', code: 'Account code', tax: 'Tax type'
+};
+
+function parseDateForSort(s) {
+  if (!s) return null;
+  s = String(s).trim();
+  let m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if (m) {
+    let day = parseInt(m[1], 10), month = parseInt(m[2], 10), year = parseInt(m[3], 10);
+    if (year < 100) year += 2000;
+    if (month > 12 && day <= 12) { const t = day; day = month; month = t; }
+    const d = new Date(year, month - 1, day);
+    return isNaN(d.getTime()) ? null : d.getTime();
+  }
+  m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) {
+    const d = new Date(+m[1], +m[2] - 1, +m[3]);
+    return isNaN(d.getTime()) ? null : d.getTime();
+  }
+  const t = Date.parse(s);
+  return isNaN(t) ? null : t;
+}
+
+const CONFIDENCE_RANK = { none: 0, fuzzy: 1, exact: 2 };
+
+function compareRows(a, b, col) {
+  if (col === 'date') {
+    const av = parseDateForSort(a.date), bv = parseDateForSort(b.date);
+    if (av === null && bv === null) return 0;
+    if (av === null) return -1;
+    if (bv === null) return 1;
+    return av - bv;
+  }
+  if (col === 'amount') {
+    const av = parseAmount(a.amount), bv = parseAmount(b.amount);
+    if (av === null && bv === null) return 0;
+    if (av === null) return -1;
+    if (bv === null) return 1;
+    return av - bv;
+  }
+  if (col === 'confidence') {
+    return (CONFIDENCE_RANK[a.confidence] ?? 0) - (CONFIDENCE_RANK[b.confidence] ?? 0);
+  }
+  const av = String(a[col] || ''), bv = String(b[col] || '');
+  return av.localeCompare(bv, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function sortByColumn(col) {
+  if (sortState.col === col) sortState.dir *= -1;
+  else { sortState.col = col; sortState.dir = 1; }
+  matchedRows.sort((a, b) => compareRows(a, b, col) * sortState.dir);
+  renderResults();
+}
+
+document.querySelectorAll('#results thead th[data-col]').forEach(th => {
+  th.addEventListener('click', () => sortByColumn(th.dataset.col));
+});
+
+function updateHeaderIndicators() {
+  document.querySelectorAll('#results thead th[data-col]').forEach(th => {
+    const col = th.dataset.col;
+    let label = COLUMN_LABELS[col];
+    if (sortState.col === col) label += sortState.dir === 1 ? ' ▲' : ' ▼';
+    th.textContent = label;
+  });
+}
 
 function renderResults() {
+  updateHeaderIndicators();
   document.getElementById('results').classList.remove('hidden');
   const tbody = document.getElementById('tbody');
   tbody.innerHTML = '';
@@ -728,10 +801,8 @@ function buildCodeSelect(selectedCode, idx) {
     opts += '<option value="' + esc(selectedCode) + '" selected>' + esc(selectedCode) + ' (not in code list)</option>';
   }
   sel.innerHTML = opts;
-  if (!selectedCode) sel.classList.add('empty');
   sel.addEventListener('change', e => {
     matchedRows[idx].code = e.target.value;
-    e.target.classList.toggle('empty', !e.target.value);
     updateExportState();
   });
   return sel;
@@ -771,17 +842,20 @@ document.querySelectorAll('.filter-bar button').forEach(btn => {
 });
 
 function updateExportState() {
-  const missing = matchedRows.filter(r => !r.code || !r.tax).length;
+  const missingTax = matchedRows.filter(r => !r.tax).length;
+  const missingCode = matchedRows.filter(r => !r.code).length;
   const btn = document.getElementById('btn-export');
   const msg = document.getElementById('export-msg');
-  if (missing > 0) {
+  if (missingTax > 0) {
     btn.disabled = true;
     msg.className = 'warn';
-    msg.textContent = missing + ' row' + (missing === 1 ? '' : 's') + ' still need' + (missing === 1 ? 's' : '') + ' an account code and/or tax type before you can export.';
+    msg.textContent = missingTax + ' row' + (missingTax === 1 ? '' : 's') + ' still need' + (missingTax === 1 ? 's' : '') + ' a tax type before you can export.';
   } else {
     btn.disabled = false;
-    msg.className = 'ok';
-    msg.textContent = 'All rows coded — ready to export.';
+    msg.className = missingCode > 0 ? 'warn' : 'ok';
+    msg.textContent = missingCode > 0
+      ? 'Ready to export — ' + missingCode + ' row' + (missingCode === 1 ? ' has' : 's have') + ' no account code, worth a check before you upload to Xero.'
+      : 'All rows coded — ready to export.';
   }
 }
 
