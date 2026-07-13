@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>Xero Account Code Matcher</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root {
     --ink: #1c1c1a;
@@ -203,11 +204,11 @@
       <span class="step-title">Basis file — already-coded transactions</span>
       <span class="step-tag">Required</span>
     </div>
-    <p class="step-desc">Xero Account Transactions report export (CSV), with Account Code, Description, Reference and Contact columns included.</p>
+    <p class="step-desc">Xero Account Transactions report export (CSV or Excel), with Account Code, Description, Reference and Contact columns included.</p>
     <div class="drop" id="drop-basis">
       <div class="dtext">Drag &amp; drop CSV here, or click to choose a file</div>
-      <div class="hint">.csv only</div>
-      <input type="file" id="file-basis" accept=".csv">
+      <div class="hint">.csv, .xlsx or .xls</div>
+      <input type="file" id="file-basis" accept=".csv,.xlsx,.xls">
     </div>
     <div class="row-info hidden" id="info-basis"></div>
   </div>
@@ -219,11 +220,11 @@
       <span class="step-title">New file — needs account codes</span>
       <span class="step-tag">Required</span>
     </div>
-    <p class="step-desc">Bank statement or unreconciled bank export (CSV) with Date, Amount, Payee/Description columns.</p>
+    <p class="step-desc">Bank statement or unreconciled bank export (CSV or Excel) with Date, Amount, Payee/Description columns.</p>
     <div class="drop" id="drop-new">
       <div class="dtext">Drag &amp; drop CSV here, or click to choose a file</div>
-      <div class="hint">.csv only</div>
-      <input type="file" id="file-new" accept=".csv">
+      <div class="hint">.csv, .xlsx or .xls</div>
+      <input type="file" id="file-new" accept=".csv,.xlsx,.xls">
     </div>
     <div class="row-info hidden" id="info-new"></div>
   </div>
@@ -235,11 +236,11 @@
       <span class="step-title">Chart of accounts</span>
       <span class="step-tag">Optional</span>
     </div>
-    <p class="step-desc">Xero Chart of Accounts export (CSV). Fills the account code dropdown with your full code list and names. If skipped, the dropdown is built from codes found in the basis file.</p>
+    <p class="step-desc">Xero Chart of Accounts export (CSV or Excel). Fills the account code dropdown with your full code list and names. If skipped, the dropdown is built from codes found in the basis file.</p>
     <div class="drop" id="drop-coa">
       <div class="dtext">Drag &amp; drop CSV here, or click to choose a file</div>
-      <div class="hint">.csv only</div>
-      <input type="file" id="file-coa" accept=".csv">
+      <div class="hint">.csv, .xlsx or .xls</div>
+      <input type="file" id="file-coa" accept=".csv,.xlsx,.xls">
     </div>
     <div class="row-info hidden" id="info-coa"></div>
   </div>
@@ -281,7 +282,7 @@
   </div>
 
   <p class="footnote">
-    Runs entirely in your browser — nothing is uploaded anywhere. Matching first tries an exact match on Payee, then Description, against your basis file; if nothing exact is found it falls back to a partial text match. Every row with no match (or a low-confidence fuzzy match) is highlighted for manual review — select the correct code and tax type from the dropdowns before exporting. Rows without both a code and tax type block export, since Xero's precoded import requires both to reconcile automatically.
+    Everything runs in your browser, and CSV files never leave your machine. Excel (.xlsx/.xls) files use a small reading library loaded once from a CDN, so an internet connection is needed the first time you open this tool with an Excel file in a session — if that's not available, export as CSV instead and it works fully offline. Matching first tries an exact match on Payee, then Description, against your basis file; if nothing exact is found it falls back to a partial text match. Every row with no match (or a low-confidence fuzzy match) is highlighted for manual review — select the correct code and tax type from the dropdowns before exporting. Rows without both a code and tax type block export, since Xero's precoded import requires both to reconcile automatically.
   </p>
 
 </div>
@@ -401,14 +402,33 @@ function wireDrop(dropId, inputId, onLoaded) {
 }
 
 function handleFile(file, dropEl, onLoaded) {
+  const name = file.name.toLowerCase();
+  const isExcel = name.endsWith('.xlsx') || name.endsWith('.xls');
   const reader = new FileReader();
+
   reader.onload = e => {
-    const rows = parseCSV(e.target.result);
+    let rows;
+    if (isExcel) {
+      if (typeof XLSX === 'undefined') {
+        dropEl.querySelector('.dtext').innerHTML =
+          '<span style="color:#a53d3d">Could not load the Excel reader (no internet connection?). Please export as CSV instead.</span>';
+        return;
+      }
+      const wb = XLSX.read(e.target.result, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' })
+        .map(r => r.map(c => (c === null || c === undefined) ? '' : String(c)));
+      rows = rows.filter(r => r.some(c => c !== ''));
+    } else {
+      rows = parseCSV(e.target.result);
+    }
     const parsed = rowsToObjects(rows);
     dropEl.querySelector('.dtext').innerHTML = 'File loaded: <span class="fname">' + file.name + '</span>';
     onLoaded(parsed);
   };
-  reader.readAsText(file);
+
+  if (isExcel) reader.readAsArrayBuffer(file);
+  else reader.readAsText(file);
 }
 
 wireDrop('drop-basis', 'file-basis', parsed => {
