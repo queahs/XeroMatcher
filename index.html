@@ -519,7 +519,8 @@ wireDrop('drop-new', 'file-new', parsed => {
     amount: findColumn(parsed.headers, ['transaction amount','amount','amt']),
     payee: findColumn(parsed.headers, ['payee name','payee','contact','name']),
     description: findColumn(parsed.headers, ['description','details','narrative','memo']),
-    reference: findColumn(parsed.headers, ['reference','ref no','reference number','ref'])
+    reference: findColumn(parsed.headers, ['reference','ref no','reference number','ref']),
+    clientSuggestion: findColumn(parsed.headers, ['account select from list','account select','select from list'])
   };
   const info = document.getElementById('info-new');
   info.classList.remove('hidden');
@@ -650,6 +651,7 @@ document.getElementById('btn-process').addEventListener('click', () => {
   const lookups = buildLookups();
   matchedRows = newData.data.map(r => {
     const m = matchTransaction(r, lookups);
+    const suggestion = computeSuggestion(r, m);
     return {
       date: newCols.date ? r[newCols.date] : '',
       amount: newCols.amount ? r[newCols.amount] : '',
@@ -657,8 +659,7 @@ document.getElementById('btn-process').addEventListener('click', () => {
       description: newCols.description ? r[newCols.description] : '',
       reference: newCols.reference ? r[newCols.reference] : '',
       code: m.code,
-      suggestedCode: m.code,
-      suggestedConfidence: m.confidence,
+      suggestedText: suggestion.text,
       confidence: m.confidence,
       tax: m.tax
     };
@@ -676,6 +677,35 @@ function formatCodeWithName(code) {
   if (!code) return '—';
   const name = nameForCode(code);
   return name ? (code + ' — ' + name) : code;
+}
+
+// Try to resolve free text (a code, or an account name like "Motor expenses") to a known account code
+function resolveTextToCode(text) {
+  const norm = normText(text);
+  if (!norm) return null;
+  let found = codeOptions.find(o => normText(o.code) === norm);
+  if (found) return found.code;
+  found = codeOptions.find(o => o.name && normText(o.name) === norm);
+  if (found) return found.code;
+  if (norm.length >= 4) {
+    found = codeOptions.find(o => o.name && (normText(o.name).includes(norm) || norm.includes(normText(o.name))));
+    if (found) return found.code;
+  }
+  return null;
+}
+
+// Suggested-code display only — never affects the exported Account code field
+function computeSuggestion(row, matchResult) {
+  const rawClientText = newCols.clientSuggestion ? (row[newCols.clientSuggestion] || '').trim() : '';
+  if (rawClientText) {
+    const resolvedCode = resolveTextToCode(rawClientText);
+    if (resolvedCode) {
+      return { text: formatCodeWithName(resolvedCode) + '  (client: "' + rawClientText + '")' };
+    }
+    return { text: '"' + rawClientText + '"  (client suggestion, no matching code found)' };
+  }
+  if (matchResult.confidence === 'none') return { text: '—' };
+  return { text: formatCodeWithName(matchResult.code) };
 }
 
 let currentFilter = 'all';
@@ -778,7 +808,7 @@ function renderResults() {
     const amtVal = parseAmount(r.amount);
     const amtClass = amtVal !== null ? (amtVal < 0 ? 'amt-neg' : 'amt-pos') : '';
 
-    const suggestedText = r.suggestedConfidence === 'none' ? '—' : formatCodeWithName(r.suggestedCode);
+    const suggestedText = r.suggestedText;
 
     tr.innerHTML =
       '<td>' + esc(r.date) + '</td>' +
