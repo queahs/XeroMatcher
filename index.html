@@ -466,10 +466,21 @@ function handleFile(file, dropEl, onLoaded) {
           '<span style="color:#a53d3d">Could not load the Excel reader (no internet connection?). Please export as CSV instead.</span>';
         return;
       }
-      const wb = XLSX.read(e.target.result, { type: 'array' });
+      const wb = XLSX.read(e.target.result, { type: 'array', cellDates: true });
       const sheet = wb.Sheets[wb.SheetNames[0]];
-      rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' })
-        .map(r => r.map(c => (c === null || c === undefined) ? '' : String(c)));
+      // raw:true returns actual cell values (Date objects for dates, numbers for numbers)
+      // rather than the cell's cached display text, which can be US-ordered (e.g. a cell
+      // formatted "mm-dd-yy" caches "4/8/25" even though the real date is 8 April).
+      rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' })
+        .map(r => r.map(c => {
+          if (c instanceof Date) {
+            const yyyy = c.getFullYear();
+            const mm = String(c.getMonth() + 1).padStart(2, '0');
+            const dd = String(c.getDate()).padStart(2, '0');
+            return yyyy + '-' + mm + '-' + dd; // unambiguous ISO, never misread as US format
+          }
+          return (c === null || c === undefined) ? '' : String(c);
+        }));
       rows = rows.filter(r => r.some(c => c !== ''));
     } else {
       rows = parseCSV(e.target.result);
