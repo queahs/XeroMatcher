@@ -269,7 +269,7 @@
             <th data-col="reference">Reference</th>
             <th data-col="amount">Amount</th>
             <th data-col="confidence">Match</th>
-            <th>Suggested code</th>
+            <th>Suggested</th>
             <th data-col="code">Account code</th>
             <th data-col="tax">Tax type</th>
           </tr>
@@ -702,7 +702,7 @@ function computeSuggestion(row, matchResult) {
     if (resolvedCode) {
       return { text: formatCodeWithName(resolvedCode) + '  (client: "' + rawClientText + '")' };
     }
-    return { text: '"' + rawClientText + '"  (client suggestion, no matching code found)' };
+    return { text: '"' + rawClientText + '"' };
   }
   if (matchResult.confidence === 'none') return { text: '—' };
   return { text: formatCodeWithName(matchResult.code) };
