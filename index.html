@@ -588,12 +588,16 @@ function checkReady() {
 /* ---------------------------------------------------------------------
    BUILD LOOKUPS FROM BASIS FILE
 --------------------------------------------------------------------- */
+const GUESS_STOPWORDS = new Set(['from','with','this','that','have','paid','your','card','into','onli','only','payment','received',
+  'direct','debit','standing','order','transfer','online','using','sale','purchase','trans','pmnt','ref','number','account']);
+
 function buildLookups() {
   const payeeMap = {};   // normText(payee) -> {code: count}
   const descMap = {};    // normText(desc) -> {code: count}
   const taxByCode = {};  // code -> {taxtype: count}
   const codeNameSeen = {}; // code -> name
   const fuzzyEntries = []; // [{text, code}]
+  const wordMap = {};    // word -> {code: count}, weaker fallback for best-guess
 
   basisData.data.forEach(r => {
     const code = basisCols.accountcode ? r[basisCols.accountcode] : '';
@@ -622,6 +626,14 @@ function buildLookups() {
       taxByCode[code] = taxByCode[code] || {};
       taxByCode[code][tax] = (taxByCode[code][tax] || 0) + 1;
     }
+    [np, nd].forEach(text => {
+      if (!text) return;
+      text.split(' ').forEach(w => {
+        if (w.length < 4 || GUESS_STOPWORDS.has(w)) return;
+        wordMap[w] = wordMap[w] || {};
+        wordMap[w][code] = (wordMap[w][code] || 0) + 1;
+      });
+    });
   });
 
   function topKey(obj) {
@@ -650,7 +662,7 @@ function buildLookups() {
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
     .map(code => ({ code, name: codeSet[code] }));
 
-  return { payeeMap, descMap, fuzzyEntries, taxForCode, topKey };
+  return { payeeMap, descMap, fuzzyEntries, wordMap, taxForCode, topKey };
 }
 
 function matchTransaction(row, lookups) {
@@ -695,17 +707,29 @@ document.getElementById('btn-process').addEventListener('click', () => {
   const lookups = buildLookups();
   matchedRows = newCombinedRows.map(r => {
     const m = matchTransaction(r, lookups);
-    const suggestion = computeSuggestion(r, m);
+    const suggestion = computeSuggestion(r, m, lookups);
+
+    let finalCode, finalSource, finalTax;
+    if (m.confidence !== 'none') {
+      finalCode = m.code; finalSource = 'match'; finalTax = m.tax;
+    } else if (suggestion.code) {
+      finalCode = suggestion.code; finalSource = suggestion.source;
+      finalTax = lookups.taxForCode[finalCode] || 'No VAT';
+    } else {
+      finalCode = ''; finalSource = 'none'; finalTax = 'No VAT';
+    }
+
     return {
       date: r.date,
       amount: r.amount,
       payee: r.payee,
       description: r.description,
       reference: r.reference,
-      code: m.code,
+      code: finalCode,
+      codeSource: finalSource,
       suggestedText: suggestion.text,
       confidence: m.confidence,
-      tax: m.tax
+      tax: finalTax
     };
   });
   renderResults();
@@ -739,17 +763,48 @@ function resolveTextToCode(text) {
 }
 
 // Suggested-code display only — never affects the exported Account code field
-function computeSuggestion(row, matchResult) {
+function guessCodeFromWords(row, lookups) {
+  const words = (normText(row.payee) + ' ' + normText(row.description))
+    .split(' ')
+    .filter(w => w.length >= 4 && !GUESS_STOPWORDS.has(w));
+  const candidates = {};
+  words.forEach(w => {
+    const bucket = lookups.wordMap[w];
+    if (!bucket) return;
+    Object.keys(bucket).forEach(code => { candidates[code] = (candidates[code] || 0) + bucket[code]; });
+  });
+  const codes = Object.keys(candidates);
+  if (!codes.length) return null;
+  let best = codes[0];
+  codes.forEach(c => { if (candidates[c] > candidates[best]) best = c; });
+  return best;
+}
+
+// Suggested-display AND best-effort autofill for rows with no confident match.
+// source: 'match' (confident), 'client' (resolved from the client's own column),
+// 'guess' (weak word-level fallback), or 'none' (nothing to go on).
+function computeSuggestion(row, matchResult, lookups) {
   const rawClientText = (row.clientSuggestion || '').trim();
+
+  if (matchResult.confidence !== 'none') {
+    return { text: formatCodeWithName(matchResult.code), code: matchResult.code, source: 'match' };
+  }
+
   if (rawClientText) {
     const resolvedCode = resolveTextToCode(rawClientText);
     if (resolvedCode) {
-      return { text: formatCodeWithName(resolvedCode) + '  (client: "' + rawClientText + '")' };
+      return { text: formatCodeWithName(resolvedCode) + '  (client: "' + rawClientText + '")', code: resolvedCode, source: 'client' };
     }
-    return { text: '"' + rawClientText + '"' };
   }
-  if (matchResult.confidence === 'none') return { text: '—' };
-  return { text: formatCodeWithName(matchResult.code) };
+
+  const guessCode = guessCodeFromWords(row, lookups);
+  if (guessCode) {
+    const suffix = rawClientText ? ' (best guess; client said "' + rawClientText + '")' : '  (best guess)';
+    return { text: formatCodeWithName(guessCode) + suffix, code: guessCode, source: 'guess' };
+  }
+
+  if (rawClientText) return { text: '"' + rawClientText + '"', code: '', source: 'none' };
+  return { text: '—', code: '', source: 'none' };
 }
 
 let currentFilter = 'all';
@@ -866,7 +921,7 @@ function renderResults() {
       '<td class="tax-cell"></td>';
 
     const codeCell = tr.querySelector('.code-cell');
-    const codeSelect = buildCodeSelect(r.code, idx);
+    const codeSelect = buildCodeSelect(r.code, idx, r.codeSource);
     codeCell.appendChild(codeSelect);
 
     const taxCell = tr.querySelector('.tax-cell');
@@ -879,7 +934,7 @@ function renderResults() {
   updateExportState();
 }
 
-function buildCodeSelect(selectedCode, idx) {
+function buildCodeSelect(selectedCode, idx, codeSource) {
   const sel = document.createElement('select');
   sel.dataset.idx = idx;
   sel.dataset.field = 'code';
@@ -893,8 +948,14 @@ function buildCodeSelect(selectedCode, idx) {
     opts += '<option value="' + esc(selectedCode) + '" selected>' + esc(selectedCode) + ' (not in code list)</option>';
   }
   sel.innerHTML = opts;
+  if (codeSource === 'client' || codeSource === 'guess') sel.classList.add('empty'); // red flag: auto-filled, not a confident match — please verify
+  sel.title = codeSource === 'client' ? 'Auto-filled from the client\'s own suggestion — please verify.'
+            : codeSource === 'guess' ? 'Best-guess auto-fill from partial text matching — please verify.' : '';
   sel.addEventListener('change', e => {
     matchedRows[idx].code = e.target.value;
+    matchedRows[idx].codeSource = 'manual';
+    e.target.classList.remove('empty');
+    e.target.title = '';
     updateExportState();
   });
   return sel;
@@ -936,6 +997,7 @@ document.querySelectorAll('.filter-bar button').forEach(btn => {
 function updateExportState() {
   const missingTax = matchedRows.filter(r => !r.tax).length;
   const missingCode = matchedRows.filter(r => !r.code).length;
+  const flaggedCode = matchedRows.filter(r => r.code && (r.codeSource === 'guess' || r.codeSource === 'client')).length;
   const btn = document.getElementById('btn-export');
   const msg = document.getElementById('export-msg');
   if (missingTax > 0) {
@@ -944,10 +1006,11 @@ function updateExportState() {
     msg.textContent = missingTax + ' row' + (missingTax === 1 ? '' : 's') + ' still need' + (missingTax === 1 ? 's' : '') + ' a tax type before you can export.';
   } else {
     btn.disabled = false;
-    msg.className = missingCode > 0 ? 'warn' : 'ok';
-    msg.textContent = missingCode > 0
-      ? 'Ready to export — ' + missingCode + ' row' + (missingCode === 1 ? ' has' : 's have') + ' no account code, worth a check before you upload to Xero.'
-      : 'All rows coded — ready to export.';
+    const parts = [];
+    if (missingCode > 0) parts.push(missingCode + ' row' + (missingCode === 1 ? ' has' : 's have') + ' no account code');
+    if (flaggedCode > 0) parts.push(flaggedCode + ' row' + (flaggedCode === 1 ? ' has an auto-filled guess' : 's have auto-filled guesses') + ' (shown in red) worth checking');
+    msg.className = parts.length ? 'warn' : 'ok';
+    msg.textContent = parts.length ? 'Ready to export — ' + parts.join('; ') + '.' : 'All rows confidently coded — ready to export.';
   }
 }
 
