@@ -25,7 +25,7 @@
     color: var(--ink);
     line-height: 1.5;
   }
-  .wrap { max-width: 1100px; margin: 0 auto; padding: 40px 24px 80px; }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 40px 24px 80px; }
   header { margin-bottom: 32px; }
   h1 {
     font-size: 22px;
@@ -145,11 +145,14 @@
   }
 
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; background: #fff; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
-  th { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); font-weight: 600; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; font-size: 12px; }
+  th { font-size: 10.5px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); font-weight: 600; }
   th[data-col] { cursor: pointer; user-select: none; }
   th[data-col]:hover { color: var(--ink); }
-  td.desc-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+  td.desc-cell { max-width: 170px; overflow: hidden; text-overflow: ellipsis; }
+  td.payee-cell { max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+  td.ref-cell { max-width: 90px; overflow: hidden; text-overflow: ellipsis; }
+  td.suggested-cell { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
   tr.row-none { background: var(--red-soft); }
   tr.row-fuzzy { background: var(--amber-soft); }
   .amt-neg { color: var(--red); }
@@ -162,12 +165,12 @@
 
   select, input.code-input {
     font-family: inherit;
-    font-size: 12.5px;
-    padding: 5px 6px;
+    font-size: 12px;
+    padding: 4px 5px;
     border-radius: 5px;
     border: 1px solid var(--line);
     background: #fff;
-    max-width: 180px;
+    max-width: 150px;
   }
   select.empty, input.code-input.empty { border-color: var(--red); background: #fff5f5; }
 
@@ -219,14 +222,14 @@
   <div class="step">
     <div class="step-head">
       <span class="step-num">2</span>
-      <span class="step-title">New file — needs account codes</span>
+      <span class="step-title">New file(s) — need account codes</span>
       <span class="step-tag">Required</span>
     </div>
-    <p class="step-desc">Bank statement or unreconciled bank export (CSV or Excel) with Date, Amount, Payee/Description columns.</p>
+    <p class="step-desc">Bank statement or unreconciled bank export (CSV or Excel) with Date, Amount, Payee/Description columns. You can drop or select several files — e.g. one per month — and they'll be combined.</p>
     <div class="drop" id="drop-new">
-      <div class="dtext">Drag &amp; drop file here, or click to choose a file</div>
-      <div class="hint">.csv, .xlsx or .xls</div>
-      <input type="file" id="file-new" accept=".csv,.xlsx,.xls">
+      <div class="dtext">Drag &amp; drop file(s) here, or click to choose</div>
+      <div class="hint">.csv, .xlsx or .xls — multiple allowed</div>
+      <input type="file" id="file-new" accept=".csv,.xlsx,.xls" multiple>
     </div>
     <div class="row-info hidden" id="info-new"></div>
   </div>
@@ -414,9 +417,9 @@ function parseAmount(s) {
 --------------------------------------------------------------------- */
 let basisData = null;   // {headers, data}
 let coaData = null;
-let newData = null;
+let newFiles = [];      // [{name, headerRowNum, cols, rowCount, warn}]
+let newCombinedRows = []; // normalized rows across all new files: {date, amount, payee, description, reference, clientSuggestion}
 let basisCols = {};
-let newCols = {};
 let coaCols = {};
 let matchedRows = [];
 let codeOptions = [];   // [{code, name}]
@@ -427,7 +430,7 @@ let taxOptions = ['No VAT','Zero Rated Expenses','Zero Rated Income','Tax Exempt
 /* ---------------------------------------------------------------------
    FILE UPLOAD WIRING
 --------------------------------------------------------------------- */
-function wireDrop(dropId, inputId, onLoaded) {
+function wireDrop(dropId, inputId, onLoaded, multiple) {
   const drop = document.getElementById(dropId);
   const input = document.getElementById(inputId);
   drop.addEventListener('click', () => input.click());
@@ -436,10 +439,17 @@ function wireDrop(dropId, inputId, onLoaded) {
   drop.addEventListener('drop', e => {
     e.preventDefault();
     drop.classList.remove('drag');
-    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0], drop, onLoaded);
+    const files = Array.from(e.dataTransfer.files || []);
+    if (!files.length) return;
+    if (multiple) files.forEach(f => handleFile(f, drop, onLoaded));
+    else handleFile(files[0], drop, onLoaded);
   });
   input.addEventListener('change', e => {
-    if (e.target.files.length) handleFile(e.target.files[0], drop, onLoaded);
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    if (multiple) files.forEach(f => handleFile(f, drop, onLoaded));
+    else handleFile(files[0], drop, onLoaded);
+    input.value = ''; // allow re-selecting the same file(s) again later
   });
 }
 
@@ -466,7 +476,7 @@ function handleFile(file, dropEl, onLoaded) {
     }
     const parsed = rowsToObjects(rows);
     dropEl.querySelector('.dtext').innerHTML = 'File loaded: <span class="fname">' + file.name + '</span>';
-    onLoaded(parsed);
+    onLoaded(parsed, file);
   };
 
   if (isExcel) reader.readAsArrayBuffer(file);
@@ -512,9 +522,41 @@ wireDrop('drop-coa', 'file-coa', parsed => {
   checkReady();
 });
 
-wireDrop('drop-new', 'file-new', parsed => {
-  newData = parsed;
-  newCols = {
+function normalizeNewRow(rawRow, cols) {
+  return {
+    date: cols.date ? rawRow[cols.date] : '',
+    amount: cols.amount ? rawRow[cols.amount] : '',
+    payee: cols.payee ? rawRow[cols.payee] : '',
+    description: cols.description ? rawRow[cols.description] : '',
+    reference: cols.reference ? rawRow[cols.reference] : '',
+    clientSuggestion: cols.clientSuggestion ? rawRow[cols.clientSuggestion] : ''
+  };
+}
+
+function renderNewFilesInfo() {
+  const info = document.getElementById('info-new');
+  if (!newFiles.length) { info.classList.add('hidden'); info.innerHTML = ''; return; }
+  info.classList.remove('hidden');
+  const rowsList = newFiles.map(f => {
+    const warn = f.warn ? ' <b style="color:#a53d3d">(Date or Amount column not found)</b>' : '';
+    return '<div>' + esc(f.name) + ' — ' + f.rowCount + ' rows (header row ' + f.headerRowNum + ')' + warn + '</div>';
+  }).join('');
+  info.innerHTML =
+    '<div><b>' + newCombinedRows.length + '</b> total rows across ' + newFiles.length + ' file' + (newFiles.length === 1 ? '' : 's') + ':</div>' +
+    rowsList +
+    '<div style="margin-top:6px;"><a href="#" id="btn-clear-new-files" style="color:var(--accent);font-weight:600;">Clear all new files</a></div>';
+  document.getElementById('btn-clear-new-files').addEventListener('click', e => {
+    e.preventDefault();
+    newFiles = [];
+    newCombinedRows = [];
+    document.querySelector('#drop-new .dtext').innerHTML = 'Drag &amp; drop file(s) here, or click to choose';
+    renderNewFilesInfo();
+    checkReady();
+  });
+}
+
+wireDrop('drop-new', 'file-new', (parsed, file) => {
+  const cols = {
     date: findColumn(parsed.headers, ['date','transaction date','trans date']),
     amount: findColumn(parsed.headers, ['transaction amount','amount','amt']),
     payee: findColumn(parsed.headers, ['payee name','payee','contact','name']),
@@ -522,21 +564,25 @@ wireDrop('drop-new', 'file-new', parsed => {
     reference: findColumn(parsed.headers, ['reference','ref no','reference number','ref']),
     clientSuggestion: findColumn(parsed.headers, ['account select from list','account select','select from list'])
   };
-  const info = document.getElementById('info-new');
-  info.classList.remove('hidden');
-  let warn = '';
-  if (!newCols.amount || !newCols.date) warn = ' &mdash; <b style="color:#a53d3d">Date or Amount column not found, check your file</b>';
-  info.innerHTML = '<b>' + parsed.data.length + '</b> rows detected (header found on row ' + parsed.headerRowNum + '). Matched columns: ' +
-    Object.entries(newCols).filter(([,v]) => v).map(([k,v]) => k + ' → "' + v + '"').join(', ') + warn;
+  const normRows = parsed.data.map(r => normalizeNewRow(r, cols));
+  newFiles.push({
+    name: file.name,
+    headerRowNum: parsed.headerRowNum,
+    rowCount: normRows.length,
+    warn: !cols.date || !cols.amount
+  });
+  newCombinedRows = newCombinedRows.concat(normRows);
+  document.querySelector('#drop-new .dtext').innerHTML = newFiles.length + ' file' + (newFiles.length === 1 ? '' : 's') + ' loaded';
+  renderNewFilesInfo();
   checkReady();
-});
+}, true);
 
 function checkReady() {
-  const ready = basisData && newData && basisCols.accountcode && newCols.date && newCols.amount;
+  const ready = basisData && basisCols.accountcode && newCombinedRows.length > 0;
   document.getElementById('btn-process').disabled = !ready;
   document.getElementById('status-msg').textContent = ready
     ? 'Ready to match.'
-    : 'Upload the basis file and new file (with recognisable columns) to continue.';
+    : 'Upload the basis file and at least one new file (with recognisable columns) to continue.';
 }
 
 /* ---------------------------------------------------------------------
@@ -608,10 +654,8 @@ function buildLookups() {
 }
 
 function matchTransaction(row, lookups) {
-  const payee = newCols.payee ? row[newCols.payee] : '';
-  const desc = newCols.description ? row[newCols.description] : '';
-  const np = normText(payee);
-  const nd = normText(desc);
+  const np = normText(row.payee);
+  const nd = normText(row.description);
 
   // 1. exact payee
   if (np && lookups.payeeMap[np]) {
@@ -649,15 +693,15 @@ function matchTransaction(row, lookups) {
 --------------------------------------------------------------------- */
 document.getElementById('btn-process').addEventListener('click', () => {
   const lookups = buildLookups();
-  matchedRows = newData.data.map(r => {
+  matchedRows = newCombinedRows.map(r => {
     const m = matchTransaction(r, lookups);
     const suggestion = computeSuggestion(r, m);
     return {
-      date: newCols.date ? r[newCols.date] : '',
-      amount: newCols.amount ? r[newCols.amount] : '',
-      payee: newCols.payee ? r[newCols.payee] : '',
-      description: newCols.description ? r[newCols.description] : '',
-      reference: newCols.reference ? r[newCols.reference] : '',
+      date: r.date,
+      amount: r.amount,
+      payee: r.payee,
+      description: r.description,
+      reference: r.reference,
       code: m.code,
       suggestedText: suggestion.text,
       confidence: m.confidence,
@@ -696,7 +740,7 @@ function resolveTextToCode(text) {
 
 // Suggested-code display only — never affects the exported Account code field
 function computeSuggestion(row, matchResult) {
-  const rawClientText = newCols.clientSuggestion ? (row[newCols.clientSuggestion] || '').trim() : '';
+  const rawClientText = (row.clientSuggestion || '').trim();
   if (rawClientText) {
     const resolvedCode = resolveTextToCode(rawClientText);
     if (resolvedCode) {
@@ -812,12 +856,12 @@ function renderResults() {
 
     tr.innerHTML =
       '<td>' + esc(r.date) + '</td>' +
-      '<td>' + esc(r.payee) + '</td>' +
+      '<td class="payee-cell" title="' + esc(r.payee) + '">' + esc(r.payee) + '</td>' +
       '<td class="desc-cell" title="' + esc(r.description) + '">' + esc(r.description) + '</td>' +
-      '<td>' + esc(r.reference) + '</td>' +
+      '<td class="ref-cell" title="' + esc(r.reference) + '">' + esc(r.reference) + '</td>' +
       '<td class="' + amtClass + '">' + esc(r.amount) + '</td>' +
       '<td><span class="badge ' + r.confidence + '">' + (r.confidence === 'exact' ? 'EXACT' : r.confidence === 'fuzzy' ? 'PARTIAL' : 'NONE') + '</span></td>' +
-      '<td class="suggested-cell" style="color:var(--muted);font-style:italic;">' + esc(suggestedText) + '</td>' +
+      '<td class="suggested-cell" title="' + esc(suggestedText) + '" style="color:var(--muted);font-style:italic;">' + esc(suggestedText) + '</td>' +
       '<td class="code-cell"></td>' +
       '<td class="tax-cell"></td>';
 
